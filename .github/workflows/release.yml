@@ -1,0 +1,75 @@
+name: Publish Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag, for example v1.0.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.version }}
+
+    steps:
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw 'Enter a release tag in the form v1.0.0.'
+          }
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build and package Windows x64
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP 'dapai-publish'
+          $archive = Join-Path $env:RUNNER_TEMP "Dapai-${env:RELEASE_TAG}-win-x64.zip"
+          $version = $env:RELEASE_TAG.Substring(1)
+          dotnet publish Dapai/Dapai.csproj -c Release -r win-x64 --self-contained true -p:Version=$version -o $publishDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          if (-not (Test-Path -LiteralPath (Join-Path $publishDir '打π优化.exe') -PathType Leaf)) {
+            throw 'The published executable is missing.'
+          }
+          $localData = Get-ChildItem -LiteralPath $publishDir -Recurse -Force |
+            Where-Object { $_.Name -in 'config.json', 'config.json.tmp', 'logs' -or $_.Extension -eq '.log' }
+          if ($localData) { throw 'Local configuration or logs must not be included in the release.' }
+
+          Copy-Item -LiteralPath LICENSE -Destination $publishDir
+          Compress-Archive -Path (Join-Path $publishDir '*') -DestinationPath $archive
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "Dapai-${env:RELEASE_TAG}-win-x64.zip"
+          $notes = @'
+          Windows x64 版本，已包含 .NET 运行时。下载 ZIP 后解压整个目录，再运行 `打π优化.exe`。
+
+          支持一键切换键盘快捷键、输入法、显示模式和音频输出，并启动已配置的程序。使用说明见仓库首页。
+          '@
+          gh release create $env:RELEASE_TAG $archive --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA --title "打π优化 $env:RELEASE_TAG" --notes $notes
