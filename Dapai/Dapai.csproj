@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>打π优化</AssemblyName>
+    <RootNamespace>Dapai</RootNamespace>
+    <ApplicationIcon>..\Apex_logo.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>zh-Hans;zh-Hant</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="..\Apex_logo.ico" Link="Apex_logo.ico" />
+    <None Include="..\config.json" Link="config.json"
+          Condition="Exists('..\config.json')"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="OmitReleaseRuntimeDiagnostics" AfterTargets="ResolveRuntimePackAssets"
+          Condition="'$(Configuration)' == 'Release' and '$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <_OptionalRuntimeDiagnostics Include="@(RuntimePackAsset)"
+          Condition="'%(RuntimePackAsset.AssetType)' == 'native' and
+                    ('%(RuntimePackAsset.Filename)' == 'createdump' or
+                     '%(RuntimePackAsset.Filename)' == 'Microsoft.DiaSymReader.Native.amd64' or
+                     '%(RuntimePackAsset.Filename)' == 'mscordbi' or
+                     $([System.String]::Copy('%(RuntimePackAsset.Filename)').StartsWith('mscordaccore')))" />
+      <RuntimePackAsset Remove="@(_OptionalRuntimeDiagnostics)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="OmitCopiedReleaseDiagnostics" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(_OptionalRuntimeDiagnostics)" />
+    </ItemGroup>
+  </Target>
+</Project>
