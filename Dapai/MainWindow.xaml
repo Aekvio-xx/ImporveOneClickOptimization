@@ -155,6 +155,12 @@
                                    FontSize="12" Foreground="{StaticResource MutedText}"/>
                     </StackPanel>
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="↑" Width="27" Height="30" Padding="0" Margin="0,0,3,0"
+                                Click="MoveLaunchItemUp" IsEnabled="{Binding CanMoveUp}" ToolTip="上移启动项"
+                                AutomationProperties.Name="{Binding Name, StringFormat='上移启动项 {0}'}"/>
+                        <Button Content="↓" Width="27" Height="30" Padding="0" Margin="0,0,9,0"
+                                Click="MoveLaunchItemDown" IsEnabled="{Binding CanMoveDown}" ToolTip="下移启动项"
+                                AutomationProperties.Name="{Binding Name, StringFormat='下移启动项 {0}'}"/>
                         <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding Enabled, Mode=TwoWay}"
                                       Margin="0,0,10,0" AutomationProperties.Name="{Binding Name, StringFormat='启用启动项 {0}'}"/>
                         <Button Content="浏览" Width="52" Height="30" Click="BrowseLaunchItem"

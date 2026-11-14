@@ -4,9 +4,9 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Interop;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
@@ -53,10 +53,10 @@ public partial class MainWindow : Window
         englishTimer.Tick += (_, _) =>
         {
             if (gameMode && ForceEnglish.IsChecked == true)
-                RunOperation("切换英文输入失败", WindowsSession.ForceEnglish, showError: false);
+                RunOperation("切换英文输入失败", ForceEnglishWithSnapshot, showError: false);
         };
         englishTimer.Start();
-        tray = TrayIcon.TryCreate(ShowFromTray, Optimize, () => Restore(showErrors: true), ExitApplication);
+        tray = TrayIcon.TryCreate(ShowFromTray, Optimize, async () => await RestoreAsync(showErrors: true), ExitApplication);
         initializing = false;
     }
 
@@ -158,8 +158,20 @@ public partial class MainWindow : Window
             Title = $"选择 {item.Name} 的可执行文件",
             Filter = "可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*",
             CheckFileExists = true,
-            FileName = File.Exists(item.Path) ? item.Path : "",
         };
+        if (!string.IsNullOrWhiteSpace(item.Path))
+        {
+            try
+            {
+                string path = LaunchService.ResolvePath(item.Path);
+                if (File.Exists(path))
+                    dialog.FileName = path;
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+            {
+                AppLog.Write("无法定位启动项原有文件。", ex);
+            }
+        }
         if (dialog.ShowDialog(this) == true)
             item.Path = dialog.FileName;
     }
@@ -171,6 +183,25 @@ public partial class MainWindow : Window
 
         item.PropertyChanged -= LaunchItemChanged;
         launchItems.Remove(item);
+        UpdateLaunchVisibility();
+        SaveSettings();
+    }
+
+    private void MoveLaunchItemUp(object sender, RoutedEventArgs e) => MoveLaunchItem(sender, -1);
+
+    private void MoveLaunchItemDown(object sender, RoutedEventArgs e) => MoveLaunchItem(sender, 1);
+
+    private void MoveLaunchItem(object sender, int offset)
+    {
+        if (sender is not FrameworkElement { DataContext: LaunchItem item })
+            return;
+
+        int index = launchItems.IndexOf(item);
+        int destination = index + offset;
+        if (index < 0 || destination < 0 || destination >= launchItems.Count)
+            return;
+
+        launchItems.Move(index, destination);
         UpdateLaunchVisibility();
         SaveSettings();
     }
@@ -197,6 +228,11 @@ public partial class MainWindow : Window
     {
         LaunchCard.Visibility = launchItems.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         LaunchEmpty.Visibility = launchItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        for (int i = 0; i < launchItems.Count; i++)
+        {
+            launchItems[i].CanMoveUp = i > 0;
+            launchItems[i].CanMoveDown = i < launchItems.Count - 1;
+        }
     }
 
     private void SaveSettings()
@@ -223,13 +259,13 @@ public partial class MainWindow : Window
                 RunOperation("切换显示模式失败", () =>
                 {
                     uint mode = DisplayControl.Modes[ui.DisplayChoice];
-                    if (mode != 1 && !DisplayControl.HasMultipleDisplays())
+                    var current = DisplayControl.Capture();
+                    if (!DisplayControl.HasMultipleDisplays(current))
                     {
-                        AppLog.Write("当前只有一个显示器，跳过显示模式切换。");
-                        Info("检测到只有一个显示器，已跳过多显示器模式切换。");
+                        AppLog.Write("只有一块可用屏幕，保留当前显示模式。");
                         return;
                     }
-                    displaySnapshot ??= DisplayControl.Capture();
+                    displaySnapshot ??= current;
                     DisplayControl.Apply(mode);
                     AppLog.Write($"显示模式已切换到：{ui.DisplayChoice}");
                 });
@@ -252,9 +288,7 @@ public partial class MainWindow : Window
             {
                 RunOperation("切换英文输入失败", () =>
                 {
-                    if (inputSnapshot == IntPtr.Zero)
-                        inputSnapshot = WindowsSession.ForegroundLayout();
-                    WindowsSession.ForceEnglish();
+                    ForceEnglishWithSnapshot();
                     AppLog.Write("已强制切换前台窗口到英文输入。");
                 });
             }
@@ -268,18 +302,27 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RestoreClicked(object sender, RoutedEventArgs e) => Restore(showErrors: true);
-
-    private void Restore(bool showErrors)
+    private void ForceEnglishWithSnapshot()
     {
-        if (operating)
-            return;
+        if (inputSnapshot == IntPtr.Zero)
+            inputSnapshot = WindowsSession.ForegroundLayout();
+        WindowsSession.ForceEnglish();
+    }
 
+    private async void RestoreClicked(object sender, RoutedEventArgs e) => await RestoreAsync(showErrors: true);
+
+    private async Task<Exception?> RestoreAsync(bool showErrors)
+    {
+        if (operating || (showErrors && exiting))
+            return null;
+
+        Exception? displayError = null;
         operating = true;
         try
         {
             AppLog.Write(showErrors ? "开始执行一键恢复。" : "退出前自动恢复。");
-            SetGameMode(false);
+            gameMode = false;
+            ModeStatus.Text = "正在恢复…";
             var previousKeys = keySnapshot.GetValueOrDefault();
             RunOperation("恢复键盘状态失败", () =>
             {
@@ -288,11 +331,18 @@ public partial class MainWindow : Window
             }, showErrors);
             if (displaySnapshot is { } display)
             {
-                RunOperation("恢复显示模式失败", () =>
+                try
                 {
-                    DisplayControl.Restore(display);
+                    await DisplayControl.RestoreAsync(display);
                     displaySnapshot = null;
-                }, showErrors);
+                }
+                catch (Exception ex)
+                {
+                    displayError = ex;
+                    AppLog.Write("恢复显示模式失败，保留优化前的配置。", ex);
+                    if (showErrors)
+                        Warn("恢复显示模式失败", ex.Message);
+                }
             }
             if (inputSnapshot != IntPtr.Zero)
             {
@@ -303,9 +353,11 @@ public partial class MainWindow : Window
                 }, showErrors);
             }
             SaveSettings();
+            return displayError;
         }
         finally
         {
+            ModeStatus.Text = displaySnapshot is null ? "普通模式" : "显示配置待恢复";
             operating = false;
         }
     }
@@ -343,7 +395,10 @@ public partial class MainWindow : Window
     private void WindowClosing(object? sender, CancelEventArgs e)
     {
         if (exiting)
+        {
+            e.Cancel = operating;
             return;
+        }
         e.Cancel = true;
         if (tray is { IsAvailable: true })
         {
@@ -354,22 +409,39 @@ public partial class MainWindow : Window
             Dispatcher.BeginInvoke(ExitApplication);
     }
 
-    private void ExitApplication()
+    private async void ExitApplication()
     {
         if (exiting || operating)
             return;
 
         exiting = true;
-        englishTimer.Stop();
         AppLog.Write("准备退出程序。");
         if (gameMode || displaySnapshot is not null || inputSnapshot != IntPtr.Zero || keySnapshot is not null)
-            Restore(showErrors: false);
+        {
+            var displayError = await RestoreAsync(showErrors: false);
+            if (displayError is not null && !ConfirmExitAfterDisplayFailure(displayError))
+            {
+                exiting = false;
+                return;
+            }
+        }
         else
             SaveSettings();
 
+        englishTimer.Stop();
         keyboard.Dispose();
         tray?.Dispose();
         Application.Current.Shutdown();
+    }
+
+    private bool ConfirmExitAfterDisplayFailure(Exception error)
+    {
+        string message = $"{error.Message}\n\n要保留当前显示状态并退出吗？";
+        const string title = "恢复显示模式失败";
+        var result = IsVisible
+            ? MessageBox.Show(this, message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No)
+            : MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+        return result == MessageBoxResult.Yes;
     }
 
     private void Info(string message) => ShowMessage("提示", message, MessageBoxImage.Information);

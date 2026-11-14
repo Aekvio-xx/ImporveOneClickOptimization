@@ -15,6 +15,8 @@ namespace Dapai;
 
 internal static class LaunchService
 {
+    public static string ResolvePath(string path) => Path.GetFullPath(path.Trim(), AppContext.BaseDirectory);
+
     public static void Launch(IEnumerable<LaunchItem> items, Action<string, string> warn)
     {
         HashSet<string>? running = null;
@@ -26,7 +28,7 @@ internal static class LaunchService
             string name = string.IsNullOrWhiteSpace(item.Name) ? "启动项" : item.Name.Trim();
             try
             {
-                string path = Path.GetFullPath(item.Path.Trim(), AppContext.BaseDirectory);
+                string path = ResolvePath(item.Path);
                 running ??= RunningPaths();
                 if (running.Contains(path))
                     continue;
@@ -73,12 +75,14 @@ internal static class LaunchService
 
     public static ImageSource? ReadIcon(string path)
     {
-        if (!File.Exists(path))
+        if (string.IsNullOrWhiteSpace(path))
             return null;
 
         try
         {
-            string fullPath = Path.GetFullPath(path);
+            string fullPath = ResolvePath(path);
+            if (!File.Exists(fullPath))
+                return null;
             if (Path.GetExtension(fullPath).Equals(".exe", StringComparison.OrdinalIgnoreCase)
                 && CountIcons(fullPath, -1, IntPtr.Zero, IntPtr.Zero, 0) == 0)
                 return null;

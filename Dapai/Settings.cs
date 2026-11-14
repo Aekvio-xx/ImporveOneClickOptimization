@@ -37,6 +37,7 @@ internal sealed class LaunchItem : INotifyPropertyChanged
     private string name = "";
     private string path = "";
     private bool enabled;
+    private bool canMoveUp, canMoveDown;
     private ImageSource? icon;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -63,6 +64,20 @@ internal sealed class LaunchItem : INotifyPropertyChanged
     {
         get => enabled;
         set => Set(ref enabled, value);
+    }
+
+    [JsonIgnore]
+    public bool CanMoveUp
+    {
+        get => canMoveUp;
+        set => Set(ref canMoveUp, value);
+    }
+
+    [JsonIgnore]
+    public bool CanMoveDown
+    {
+        get => canMoveDown;
+        set => Set(ref canMoveDown, value);
     }
 
     [JsonIgnore]
